@@ -68,10 +68,10 @@ func setupLogging(level string) {
 	switch strings.ToLower(level) {
 	case "debug":
 		log.SetLevel(log.DebugLevel)
-	case "info":
-		log.SetLevel(log.InfoLevel)
-	default:
+	case "error":
 		log.SetLevel(log.ErrorLevel)
+	default:
+		log.SetLevel(log.InfoLevel)
 	}
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
@@ -212,7 +212,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to get user config directory: %v", err)
 	}
-	instanceDir := filepath.Join(userConfigDir, cfg.Hostname)
+	instanceDir := filepath.Join(userConfigDir, "tsrouter", cfg.Hostname)
 
 	// Create and configure the Tailscale node
 	s := &tsnet.Server{
@@ -240,7 +240,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create Tailscale listener: %v", err)
 	}
-
 	log.Infof("Service available at %s.%s -> localhost:%d", cfg.Hostname, tailnet, cfg.TargetPort)
 	if err := http.Serve(ln, proxy); err != nil {
 		log.Fatalf("Failed to serve proxy: %v", err)

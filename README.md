@@ -31,7 +31,7 @@ go build -ldflags "-s -w" -trimpath -o tsrouter
 
 - `--hostname`: Required. The desired Tailscale hostname for this service (will be available as hostname.your-tailnet.ts.net)
 - `--target-port`: Required. The local port to forward traffic to
-- `--log-level`: Optional. Set logging level (error, info, debug). Defaults to "error"
+- `--log-level`: Optional. Set logging level (error, info, debug). Defaults to "info"
 
 ### Examples
 
