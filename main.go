@@ -53,7 +53,7 @@ func parseFlags() *Config {
 
 	flag.IntVar(&cfg.TargetPort, "target-port", 0, "Local port to forward to")
 	flag.StringVar(&cfg.Hostname, "hostname", "", "Desired Tailscale hostname")
-	flag.StringVar(&cfg.LogLevel, "log-level", "error", "Log level (error, info, debug)")
+	flag.StringVar(&cfg.LogLevel, "log-level", "info", "Log level (error, info, debug)")
 	flag.Parse()
 
 	if cfg.TargetPort == 0 || cfg.Hostname == "" {
