@@ -32,6 +32,7 @@ type Config struct {
 	TargetPort int
 	Hostname   string
 	LogLevel   string
+	// funnel     bool // TODO: Add flag for funnel
 }
 
 const (
@@ -54,6 +55,7 @@ func parseFlags() *Config {
 	flag.IntVar(&cfg.TargetPort, "target-port", 0, "Local port to forward to")
 	flag.StringVar(&cfg.Hostname, "hostname", "", "Desired Tailscale hostname")
 	flag.StringVar(&cfg.LogLevel, "log-level", "error", "Log level (error, info, debug)")
+	// flag.BoolVar(&cfg.funnel, "funnel", false, "Use Tailscale Funnel to allow incoming connections over open internet") // TODO: Add flag for funnel
 	flag.Parse()
 
 	if cfg.TargetPort == 0 || cfg.Hostname == "" {
@@ -236,6 +238,7 @@ func main() {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 
 	// Get a listener on the Tailscale network
+	// ln, err := s.ListenFunnel("tcp", ":443") // TODO: Allow funnel based on flag, maybe add as function?
 	ln, err := s.ListenTLS("tcp", ":443")
 	if err != nil {
 		log.Fatalf("Failed to create Tailscale listener: %v", err)
