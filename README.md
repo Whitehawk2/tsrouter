@@ -17,6 +17,12 @@ services, and needed a reason to start learning Golang :)
 go build -ldflags "-s -w" -trimpath -o tsrouter
 ```
 
+or:
+
+```bash
+go install github.com/whitehawk2/tsrouter
+```
+
 ## Usage
 
 1. Set your Tailscale variables (TS_CLIENT_ID, TS_CLIENT_ID, TS_TAILNET) as either environment variables, or in an `.env` file.

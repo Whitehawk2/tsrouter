@@ -8,6 +8,8 @@ package main
 //		 - support multiple concurrent reverse proxies instead of making the user run multiple instances of the program
 //		 - detection (and handling) of the case where the user tries to run the program with the same hostname and target port
 //		 - detection and integration to the proxied service - deteced if port is listning, graceful shutdown, etc.
+//		 - support background operation (daemon mode)?
+//			- support for multiple target ports (and maybe multiple hostnames)
 
 import (
 	"context"
