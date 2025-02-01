@@ -54,7 +54,7 @@ func parseFlags() *Config {
 
 	flag.IntVar(&cfg.TargetPort, "target-port", 0, "Local port to forward to")
 	flag.StringVar(&cfg.Hostname, "hostname", "", "Desired Tailscale hostname")
-	flag.StringVar(&cfg.LogLevel, "log-level", "error", "Log level (error, info, debug)")
+	flag.StringVar(&cfg.LogLevel, "log-level", "info", "Log level (error, info, debug)")
 	// flag.BoolVar(&cfg.funnel, "funnel", false, "Use Tailscale Funnel to allow incoming connections over open internet") // TODO: Add flag for funnel
 	flag.Parse()
 
