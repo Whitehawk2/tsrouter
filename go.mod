@@ -1,4 +1,4 @@
-module github.com/whitehawk2/tsnetroutroauth
+module github.com/whitehawk2/tsrouter
 
 go 1.23.4
 
