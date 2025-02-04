@@ -24,15 +24,10 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/whitehawk2/tsrouter/models"
 	log "github.com/sirupsen/logrus"
 	"tailscale.com/tsnet"
 )
-
-type Config struct {
-	TargetPort int
-	Hostname   string
-	LogLevel   string
-}
 
 const (
 	tailscaleAuthURL  = "https://api.tailscale.com/api/v2/oauth/token"
@@ -40,16 +35,8 @@ const (
 	authKeyExpiryDays = 14 // TODO: Make this configurable
 )
 
-type TailscaleAuthKey struct {
-	ID        string    `json:"id"`
-	Key       string    `json:"key"`
-	Created   time.Time `json:"created"`
-	Expires   time.Time `json:"expires"`
-	Ephemeral bool      `json:"ephemeral"`
-}
-
-func parseFlags() *Config {
-	cfg := &Config{}
+func parseFlags() *models.Config {
+	cfg := &models.Config{}
 
 	flag.IntVar(&cfg.TargetPort, "target-port", 0, "Local port to forward to")
 	flag.StringVar(&cfg.Hostname, "hostname", "", "Desired Tailscale hostname")
@@ -103,7 +90,7 @@ func loadEnvConfig() error {
 	return nil
 }
 
-func generateAuthKey(ctx context.Context, client *http.Client, tailnet string) (*TailscaleAuthKey, error) {
+func generateAuthKey(ctx context.Context, client *http.Client, tailnet string) (*models.TailscaleAuthKey, error) {
 	endpoint := fmt.Sprintf("%s/tailnet/%s/keys", tailscaleAPIBase, tailnet)
 	log.WithField("endpoint", endpoint).Debug("Generating new auth key")
 
@@ -158,7 +145,7 @@ func generateAuthKey(ctx context.Context, client *http.Client, tailnet string) (
 		return nil, fmt.Errorf("failed to generate auth key: HTTP %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	var authKey TailscaleAuthKey
+	var authKey models.TailscaleAuthKey
 	if err := json.Unmarshal(bodyBytes, &authKey); err != nil {
 		return nil, fmt.Errorf("failed to decode auth key response: %v", err)
 	}
