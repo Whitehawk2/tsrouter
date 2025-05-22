@@ -1,9 +1,7 @@
 package main
 
 // TODO: General:
-//		 - graceful shutdown (close Tailscale node, close listener, etc.), with signal handling (SIGINT, SIGTERM)
-//		 - add Error handling to LSP pinged issues, and to the GetAccessToken function from oauth.go
-//		 - Logging overview
+//		 - Logging overview (Error handling improved, further review may be needed)
 //		 - security, general cleanup, and optimization overview
 //		 - support multiple concurrent reverse proxies instead of making the user run multiple instances of the program
 //		 - detection (and handling) of the case where the user tries to run the program with the same hostname and target port
@@ -11,28 +9,31 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	// "encoding/json" // No longer needed here after moving GenerateAuthKey
 	"flag"
 	"fmt"
-	"io"
+	// "io" // No longer needed after removing duplicated generateAuthKey
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/whitehawk2/tsrouter/models"
+	"github.com/whitehawk2/tsrouter/tailscaleapi" // New import
 	log "github.com/sirupsen/logrus"
 	"tailscale.com/tsnet"
 )
 
 const (
-	tailscaleAuthURL  = "https://api.tailscale.com/api/v2/oauth/token"
-	tailscaleAPIBase  = "https://api.tailscale.com/api/v2"
-	authKeyExpiryDays = 14 // TODO: Make this configurable
+	tailscaleAuthURL = "https://api.tailscale.com/api/v2/oauth/token"
+	// tailscaleAPIBase has been moved to tailscaleapi package
+	// authKeyExpiryDays constant is now replaced by a configurable flag
 )
 
 func parseFlags() *models.Config {
@@ -41,6 +42,7 @@ func parseFlags() *models.Config {
 	flag.IntVar(&cfg.TargetPort, "target-port", 0, "Local port to forward to")
 	flag.StringVar(&cfg.Hostname, "hostname", "", "Desired Tailscale hostname")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "Log level (error, info, debug)")
+	flag.IntVar(&cfg.AuthKeyExpiryDays, "auth-key-expiry-days", 14, "Validity duration for the Tailscale auth key in days")
 	flag.Parse()
 
 	if cfg.TargetPort == 0 || cfg.Hostname == "" {
@@ -90,74 +92,8 @@ func loadEnvConfig() error {
 	return nil
 }
 
-func generateAuthKey(ctx context.Context, client *http.Client, tailnet string) (*models.TailscaleAuthKey, error) {
-	endpoint := fmt.Sprintf("%s/tailnet/%s/keys", tailscaleAPIBase, tailnet)
-	log.WithField("endpoint", endpoint).Debug("Generating new auth key")
-
-	expiry := time.Now().Add(authKeyExpiryDays * 24 * time.Hour)
-
-	reqBody := map[string]interface{}{
-		"capabilities": map[string]interface{}{
-			"devices": map[string]interface{}{
-				"create": map[string]interface{}{
-					"reusable":      false,
-					"ephemeral":     true,
-					"preauthorized": true,
-					"tags":          []string{"tag:server"}, // TODO: make this configurable
-				},
-			},
-		},
-		"expirySeconds": int(expiry.Sub(time.Now()).Seconds()),
-	}
-
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal auth key request: %v", err)
-	}
-
-	log.WithFields(log.Fields{
-		"endpoint": endpoint,
-		"body":     string(jsonBody),
-	}).Debug("Sending auth key request")
-
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		endpoint,
-		strings.NewReader(string(jsonBody)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create auth key request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send auth key request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		log.WithFields(log.Fields{
-			"status_code": resp.StatusCode,
-			"endpoint":    endpoint,
-			"response":    string(bodyBytes),
-		}).Debug("Auth key request failed")
-		return nil, fmt.Errorf("failed to generate auth key: HTTP %d - %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var authKey models.TailscaleAuthKey
-	if err := json.Unmarshal(bodyBytes, &authKey); err != nil {
-		return nil, fmt.Errorf("failed to decode auth key response: %v", err)
-	}
-
-	log.WithFields(log.Fields{
-		"key_id":   authKey.ID,
-		"expires":  authKey.Expires,
-		"endpoint": endpoint,
-		"response": string(bodyBytes),
-	}).Debug("Generated new auth key")
-	return &authKey, nil
-}
+// generateAuthKey has been moved to the tailscaleapi package.
+// Ensure all calls are made to tailscaleapi.GenerateAuthKey.
 
 func main() {
 	cfg := parseFlags()
@@ -165,39 +101,58 @@ func main() {
 
 	// Load environment variables from .env file
 	if err := loadEnvConfig(); err != nil {
-		log.Debug(err)
+		log.Warnf("Failed to load .env file: %v. Continuing with system environment variables.", err)
 	}
 
 	// Get tailnet name from environment
 	tailnet := os.Getenv("TS_TAILNET")
 	if tailnet == "" {
-		log.Fatal("TS_TAILNET environment variable is required")
+		log.Errorf("TS_TAILNET environment variable is required")
+		os.Exit(1)
 	}
 
 	// Get OAuth token
-	ctx := context.Background()
-	client, _ := GetAccessToken(ctx) // TODO: add error handling
+	ctx := context.Background() // Main context for setup
+	client, err := GetAccessToken(ctx)
+	if err != nil {
+		log.Errorf("Failed to get OAuth token: %v", err)
+		os.Exit(1)
+	}
 
 	// Test the token with a devices list request
-	testEndpoint := fmt.Sprintf("%s/tailnet/%s/devices", tailscaleAPIBase, tailnet)
-	req, _ := http.NewRequestWithContext(ctx, "GET", testEndpoint, nil)
+	// tailscaleAPIBase is defined in the tailscaleapi package, so we construct the URL here.
+	// Consider moving this test into the tailscaleapi package in the future.
+	apiBase := "https://api.tailscale.com/api/v2" // TODO: Get this from a shared constant or config
+	testEndpoint := fmt.Sprintf("%s/tailnet/%s/devices", apiBase, tailnet)
+	req, err := http.NewRequestWithContext(ctx, "GET", testEndpoint, nil)
+	if err != nil {
+		log.Errorf("Failed to create request for OAuth token test: %v", err)
+		os.Exit(1)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatalf("Failed to test OAuth token: %v", err)
+		log.Errorf("Failed to test OAuth token: %v", err)
+		os.Exit(1)
 	}
 	resp.Body.Close()
 	log.WithField("status", resp.StatusCode).Debug("OAuth token test request completed")
 
-	// Generate auth key
-	authKey, err := generateAuthKey(ctx, client, tailnet)
+	// Calculate expiry for auth key using the configured value
+	expiryDuration := time.Duration(cfg.AuthKeyExpiryDays) * 24 * time.Hour
+	expirySeconds := int(expiryDuration.Seconds()) // Total lifetime in seconds
+
+	// Generate auth key using the new package
+	authKey, err := tailscaleapi.GenerateAuthKey(ctx, client, tailnet, expirySeconds)
 	if err != nil {
-		log.Fatalf("Failed to generate auth key: %v", err)
+		log.Errorf("Failed to generate auth key: %v", err)
+		os.Exit(1)
 	}
 
 	// separate config dirs to avoide conflicting states
 	userConfigDir, err := os.UserConfigDir()
 	if err != nil {
-		log.Fatalf("failed to get user config directory: %v", err)
+		log.Errorf("Failed to get user config directory: %v", err)
+		os.Exit(1)
 	}
 	instanceDir := filepath.Join(userConfigDir, "tsrouter", cfg.Hostname)
 
@@ -210,14 +165,16 @@ func main() {
 
 	log.Debug("Starting Tailscale node...")
 	if err := s.Start(); err != nil {
-		log.Fatalf("Failed to start Tailscale node: %v", err)
+		log.Errorf("Failed to start Tailscale node: %v", err)
+		os.Exit(1)
 	}
 
 	// Create the reverse proxy
 	targetURL := fmt.Sprintf("http://localhost:%d", cfg.TargetPort)
 	target, err := url.Parse(targetURL)
 	if err != nil {
-		log.Fatalf("Failed to parse target URL: %v", err)
+		log.Errorf("Failed to parse target URL '%s': %v", targetURL, err)
+		os.Exit(1)
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
@@ -225,11 +182,60 @@ func main() {
 	// Get a listener on the Tailscale network
 	ln, err := s.ListenTLS("tcp", ":443")
 	if err != nil {
-		log.Fatalf("Failed to create Tailscale listener: %v", err)
+		log.Errorf("Failed to create Tailscale listener: %v", err)
+		if s != nil { // s should not be nil here, but good practice to check
+			if closeErr := s.Close(); closeErr != nil {
+				log.Errorf("Failed to close Tailscale node during error handling for ListenTLS: %v", closeErr)
+			}
+		}
+		os.Exit(1)
 	}
 	log.Infof("Service available at %s.%s -> localhost:%d", cfg.Hostname, tailnet, cfg.TargetPort)
-	if err := http.Serve(ln, proxy); err != nil {
-		log.Fatalf("Failed to serve proxy: %v", err)
+
+	// Create an http.Server instance
+	httpServer := &http.Server{
+		Handler: proxy,
+		// Consider adding timeouts like ReadTimeout, WriteTimeout, IdleTimeout for robustness
 	}
-	defer s.Close()
+
+	// Start the HTTP server in a goroutine
+	// Set up signal handling for graceful shutdown
+	quit := make(chan os.Signal, 1) // quit channel needs to be defined before the goroutine that might use it.
+
+	go func() {
+		log.Info("Starting HTTP server on Tailscale listener...")
+		// ServeTLS with empty cert/key files because ln is already a TLS listener
+		if err := httpServer.ServeTLS(ln, "", ""); err != nil && err != http.ErrServerClosed {
+			log.Errorf("HTTP server failed: %v. Initiating shutdown.", err)
+			quit <- syscall.SIGINT // Send signal to trigger graceful shutdown
+		}
+	}()
+
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	receivedSignal := <-quit // Block until a signal is received
+
+	log.Infof("Received signal: %v. Starting graceful shutdown...", receivedSignal)
+
+	// Create a context with a timeout for the shutdown process
+
+	// Create a context with a timeout for the shutdown process
+	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+
+	// Shutdown the HTTP server
+	if err := httpServer.Shutdown(ctxShutdown); err != nil {
+		log.Errorf("HTTP server shutdown error: %v", err)
+	} else {
+		log.Info("HTTP server gracefully shut down.")
+	}
+
+	// Close the Tailscale node
+	// s.Close() should be called after the http server using its listener has shut down.
+	if err := s.Close(); err != nil {
+		log.Errorf("Tailscale node shutdown error: %v", err)
+	} else {
+		log.Info("Tailscale node gracefully shut down.")
+	}
+
+	log.Info("Shutdown complete.")
 }
